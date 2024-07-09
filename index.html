@@ -1,0 +1,253 @@
+﻿<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, user-scalable=no, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0" />
+    <meta name="apple-mobile-web-capable" content="yes" />
+    <script src="./js/guage.min.js"></script>
+    <script src="./js/vue.min.js"></script>
+    <script src="./js/tone.js"></script>
+    <link rel="stylesheet" href="./css/bulma.css" />
+    <link rel="stylesheet" href="./css/bulma-steps.css" />
+    <title>音准练习</title>
+  </head>
+
+  <body>
+    <div id="app">
+      <div style="width: 400px; margin: auto; text-align: center; margin-top: 50px">
+        <span style="line-height: 40px">
+          大调
+          <div class="select">
+            <select @change="makeSureTask()" v-model="selectedMelody">
+              <option v-for="(content,index) in melody" :value="content">{{content.name}}</option>
+            </select>
+          </div>
+        </span>
+      </div>
+
+      <div style="margin: auto; text-align: center">
+        <div>
+          <label class="checkbox">
+            <input type="checkbox" v-model="taskLoop" />
+            循环
+          </label>
+          <label class="checkbox">
+            <input type="checkbox" v-model="singleString" @change="makeSureTask()" />
+            单弦练习
+          </label>
+        </div>
+        <div class="control" v-show="singleString">
+          <label class="radio" v-for="index in 4">
+            <input type="radio" name="rsvp" :value="index" @click="selectedString=index;makeSureTask()" :checked="selectedString===index" />
+            {{index}}弦
+          </label>
+        </div>
+        <div style="display: flex; justify-content: center; padding: 0 10px">
+          <div style="text-align: center; border: 2px black solid; overflow: hidden; height: 180px; display: flex; justify-content: center">
+            <canvas id="canvas"></canvas>
+          </div>
+        </div>
+        <div>
+          <progress class="progress is-success progress-indeterminate-duration" style="width: 100px; display: inline-block; margin: 10px" :value="precision" max="100">60%</progress>
+          <h1>
+            当前音高:
+            <span id="freqNow">0</span>
+          </h1>
+        </div>
+
+        <button class="button is-primary" style="margin-top: 10px" id="intercomBegin" @click="begin()">获取麦克风</button>
+      </div>
+      <ul class="steps is-horizontal" style="margin-top: 20px; padding: 0 10px; flex-wrap: wrap; row-gap: 8px">
+        <li v-for="(content,i) in task" class="steps-segment" v-bind:class="{ 'is-active': taskNow==i }">
+          <span class="steps-marker">{{content}}</span>
+        </li>
+      </ul>
+    </div>
+    <script>
+      var app = new Vue({
+        el: "#app",
+        data: {
+          selectedMelody: {
+            name: "C",
+            content: ["A3", "B3", "C4", "D4", "E4", "F4", "G4", "A4", "B4", "C5", "D5", "E5", "F5", "G5", "A5", "B5"],
+          },
+          precision: 0,
+          gauge: null,
+          freqNum: 440,
+          task: ["A3", "B3", "C4", "D4", "E4", "F4", "G4", "A4", "B4", "C5", "D5", "E5", "F5", "G5", "A5", "B5"],
+          singleString: false,
+          taskLoop: true,
+          selectedString: 1,
+          melody: melody,
+          taskNow: 0,
+        },
+        methods: {
+          makeSureTask() {
+            let melodyContent = this.selectedMelody.content;
+            if (this.singleString) {
+              let arr = [];
+              for (let i = 0, length = melodyContent.length; i < length; i++) {
+                if (Math.floor(i / 4) === this.selectedString - 1) {
+                  arr.push(melodyContent[i]);
+                }
+              }
+              this.task = arr;
+            } else {
+              this.task = melodyContent;
+            }
+          },
+          isCorrect(x, y) {
+            if (y > x - 3 && y < x + 3) {
+              return true;
+            } else {
+              return false;
+            }
+          },
+          begin() {
+            navigator.getUserMedia = navigator.getUserMedia || navigator.webkitGetUserMedia;
+            if (!navigator.getUserMedia) {
+              alert("浏览器不支持音频输入");
+            } else {
+              navigator.getUserMedia(
+                {
+                  audio: true,
+                },
+                (mediaStream) => {
+                  this.record = new Recorder(mediaStream);
+                  this.record.recorder.onaudioprocess = (e) => {
+                    var inputBuffer = e.inputBuffer.getChannelData(0);
+                    let ifr = new Float32Array(inputBuffer);
+
+                    let f = autoCorrelate(inputBuffer, 48000);
+
+                    if (f > 150 && f < 1020) {
+                      this.freqNum = f.toFixed(2);
+                    }
+
+                    if (this.precision < 100) {
+                      if (this.isCorrect(findTone(this.task[this.taskNow]), f)) {
+                        this.precision += 5;
+                      } else {
+                        if (this.precision > 0) {
+                          this.precision -= 1;
+                        }
+                      }
+                      if (this.precision >= 100) {
+                        if (this.taskNow >= this.task.length - 1) {
+                          if (this.taskLoop) {
+                            this.taskNow = 0;
+                          }
+                        } else {
+                          this.taskNow++;
+                        }
+                        this.precision = 0;
+                      }
+                    }
+                  };
+                  this.record.start();
+                },
+                function (error) {
+                  console.log(error);
+                  switch (error.message || error.name) {
+                    case "PERMISSION_DENIED":
+                    case "PermissionDeniedError":
+                      console.info("用户拒绝提供信息。");
+                      break;
+                    case "NOT_SUPPORTED_ERROR":
+                    case "NotSupportedError":
+                      console.info("浏览器不支持硬件设备。");
+                      break;
+                    case "MANDATORY_UNSATISFIED_ERROR":
+                    case "MandatoryUnsatisfiedError":
+                      console.info("无法发现指定的硬件设备。");
+                      break;
+                    default:
+                      console.info("无法打开麦克风。异常信息:" + (error.code || error.name));
+                      break;
+                  }
+                }
+              );
+            }
+          },
+        },
+        mounted() {
+          this.gauge = new RadialGauge({
+            renderTo: "canvas",
+            width: 400,
+            height: 400,
+            units: "Hz",
+            title: "A4",
+            fontTitleSize: 48,
+            minValue: 0,
+            startAngle: 180,
+            ticksAngle: 300,
+            valueBox: false,
+            maxValue: 90,
+            majorTicks: ["0", "20", "40", "60", "-40", "-20", ""],
+            minorTicks: 40,
+            strokeTicks: true,
+            highlights: [
+              {
+                from: 160,
+                to: 220,
+                color: "rgba(200, 50, 50, .75)",
+              },
+            ],
+            colorPlate: "#fff",
+            borderShadowWidth: 0,
+            borders: false,
+            needleType: "line",
+            highlights: false,
+            needleWidth: 2,
+            needleCircleSize: 15,
+            needleStart: 75,
+            needleEnd: 95,
+            needleCircleOuter: false,
+            needleCircleInner: false,
+            animationDuration: 300,
+            animationRule: "linear",
+            animationTarget: "plate",
+          }).draw();
+
+          setInterval(() => {
+            let frequencyNumber = this.freqNum;
+
+            let majorTicksArray = [];
+            let frequencyOffset = 0;
+            let nearestFrequency = findCloseNum(tone, frequencyNumber);
+            if (frequencyNumber) {
+              for (let i = 0; i < 5; i++) {
+                if (i === 1) {
+                  majorTicksArray.push(`${nearestFrequency.freq - 20}`);
+                } else if (i === 2) {
+                  majorTicksArray.push(`${nearestFrequency.freq}`);
+                  frequencyOffset = nearestFrequency.freq;
+                } else if (i === 3) {
+                  majorTicksArray.push(`${nearestFrequency.freq + 20}`);
+                } else {
+                  majorTicksArray.push("");
+                }
+              }
+            }
+
+            if (this.gauge.options.majorTicks[1] !== majorTicksArray[1]) {
+              this.gauge.options.majorTicks = majorTicksArray;
+              this.gauge.options.highlights = [
+                {
+                  from: 45 - 3,
+                  to: 45 + 3,
+                  color: "rgba(0, 255, 127, .75)",
+                },
+              ];
+              this.gauge.options.title = nearestFrequency.note;
+              this.gauge.update();
+            }
+
+            this.gauge.value = 45 - (frequencyOffset - frequencyNumber);
+            freqNow.innerText = this.freqNum;
+          }, 300);
+        },
+      });
+    </script>
+  </body>
+</html>
